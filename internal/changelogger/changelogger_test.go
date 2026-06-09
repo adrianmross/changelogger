@@ -1,8 +1,10 @@
 package changelogger
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -49,5 +51,44 @@ func TestReleasePRInfo(t *testing.T) {
 	}
 	if number != "123" || head != "release-please--branches--main--components--trqp_vdr_go" {
 		t.Fatalf("unexpected release PR info: %s %s", number, head)
+	}
+}
+
+func TestInitWritesReadme(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".changelogs")
+	var stdout bytes.Buffer
+
+	if err := Run([]string{"init", "--component", "trqp_vdr_go", "--dir", dir}, nil, &stdout, &stdout); err != nil {
+		t.Fatal(err)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(readme, []byte("changelogger new --component trqp_vdr_go")) {
+		t.Fatalf("README did not include component command:\n%s", readme)
+	}
+}
+
+func TestNewUsesThreeWordSlug(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".changelogs")
+	input := bytes.NewBufferString("patch\nfix\nFix bootstrap debug flow.\n\n")
+	var stdout bytes.Buffer
+
+	if err := Run([]string{"new", "--component", "trqp_vdr_go", "--dir", dir}, input, &stdout, &stdout); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := FragmentFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one fragment, got %d", len(files))
+	}
+	name := filepath.Base(files[0])
+	if !regexp.MustCompile(`^[a-z]+-[a-z]+-[a-z]+\.md$`).MatchString(name) {
+		t.Fatalf("expected three-word slug filename, got %s", name)
 	}
 }

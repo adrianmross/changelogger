@@ -2,7 +2,14 @@
 
 `changelogger` is a small, dependency-light Go CLI for chaincode release intent.
 
-Developers add explicit changelog fragments:
+Initialize a repository:
+
+```sh
+changelogger init --component trqp_vdr_go
+```
+
+Developers add explicit changelog fragments. Fragment files use three-word
+random slugs, for example `.changelogs/amber-matrix-river.md`.
 
 ```sh
 changelogger new --component trqp_vdr_go

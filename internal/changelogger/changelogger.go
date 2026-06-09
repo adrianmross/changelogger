@@ -2,20 +2,19 @@ package changelogger
 
 import (
 	"bufio"
-	"crypto/sha1"
-	"encoding/hex"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 )
 
 const defaultDir = ".changelogs"
@@ -30,6 +29,15 @@ var (
 	validBumps = map[string]bool{"patch": true, "minor": true, "major": true}
 	validTypes = map[string]bool{"fix": true, "feat": true, "deps": true}
 	semverRE   = regexp.MustCompile(`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`)
+	slugWords  = []string{
+		"amber", "anchor", "arcade", "atlas", "aurora", "baker", "basin", "binary", "brisk", "brook",
+		"cable", "carbon", "cedar", "cinder", "civic", "clover", "cobalt", "copper", "coral", "crystal",
+		"delta", "ember", "fabric", "fable", "frost", "galaxy", "garden", "harbor", "hazel", "ivory",
+		"jade", "jigsaw", "kernel", "lantern", "ledger", "linear", "lumen", "maple", "matrix", "meadow",
+		"mercury", "mirror", "module", "nebula", "nomad", "onyx", "orbit", "parcel", "pearl", "pixel",
+		"prairie", "quartz", "radar", "radius", "ripple", "river", "saffron", "signal", "silver", "summit",
+		"timber", "topaz", "vector", "velvet", "vertex", "violet", "walnut", "willow", "zenith",
+	}
 )
 
 type Fragment struct {
@@ -59,6 +67,8 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) err
 	}
 
 	switch args[0] {
+	case "init":
+		return runInit(args[1:], stdout)
 	case "new":
 		return runNew(args[1:], stdin, stdout)
 	case "check":
@@ -80,11 +90,30 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) err
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
+  changelogger init --component <name>
   changelogger new --component <name>
   changelogger check --component <name> [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
   changelogger consume
   changelogger release-pr-info --prs-json <json>
   changelogger release-tag --component <name> --version-file .ochain.json --manifest-file .release-please-manifest.json`)
+}
+
+func runInit(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	component := fs.String("component", "", "component name")
+	dir := fs.String("dir", defaultDir, "fragment directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *component == "" {
+		return errors.New("--component is required")
+	}
+	if err := Init(*dir, *component); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Initialized %s for %s.\n", *dir, *component)
+	return nil
 }
 
 func runNew(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -139,9 +168,10 @@ func runNew(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err := os.MkdirAll(*dir, 0o755); err != nil {
 		return err
 	}
-	hash := sha1.Sum([]byte(fmt.Sprintf("%d:%s", time.Now().UnixNano(), summary)))
-	name := fmt.Sprintf("%s-%s.md", slug(summary), hex.EncodeToString(hash[:])[:8])
-	path := filepath.Join(*dir, name)
+	path, err := NewFragmentPath(*dir)
+	if err != nil {
+		return err
+	}
 	lines := []string{
 		"---",
 		"component: " + *component,
@@ -283,17 +313,64 @@ func ask(reader *bufio.Reader, stdout io.Writer, prompt string) (string, error) 
 	return strings.TrimSpace(value), nil
 }
 
-func slug(value string) string {
-	lowered := strings.ToLower(value)
-	re := regexp.MustCompile(`[^a-z0-9]+`)
-	slug := strings.Trim(re.ReplaceAllString(lowered, "-"), "-")
-	if slug == "" {
-		return "change"
+func Init(dir string, component string) error {
+	if component == "" {
+		return errors.New("component is required")
 	}
-	if len(slug) > 64 {
-		return strings.Trim(slug[:64], "-")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
-	return slug
+	readme := fmt.Sprintf(`# Changelog Fragments
+
+Use changelogger for user-visible chaincode changes:
+
+`+"```sh"+`
+changelogger new --component %[1]s
+`+"```"+`
+
+The command writes a fragment under %[2]s with a three-word random slug.
+Use the printed PR title so Release Please can derive the version bump after
+the PR is merged.
+
+Release PRs consume these fragments, update CHANGELOG.md, bump .ochain.json,
+and then create a tag for GoReleaser.
+`, component, dir)
+	return os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644)
+}
+
+func NewFragmentPath(dir string) (string, error) {
+	var lastErr error
+	for range 20 {
+		slug, err := RandomSlug()
+		if err != nil {
+			return "", err
+		}
+		path := filepath.Join(dir, slug+".md")
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			if closeErr := file.Close(); closeErr != nil {
+				return "", closeErr
+			}
+			return path, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+		lastErr = err
+	}
+	return "", fmt.Errorf("could not create unique fragment path: %w", lastErr)
+}
+
+func RandomSlug() (string, error) {
+	words := make([]string, 3)
+	for i := range words {
+		index, err := rand.Int(rand.Reader, big.NewInt(int64(len(slugWords))))
+		if err != nil {
+			return "", err
+		}
+		words[i] = slugWords[index.Int64()]
+	}
+	return strings.Join(words, "-"), nil
 }
 
 func FragmentFiles(dir string) ([]string, error) {
