@@ -95,7 +95,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) err
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
-  changelogger init --component <name>
+  changelogger init [--component <name>]
   changelogger new [--component <name>]
   changelogger check [--component <name>] [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
   changelogger consume
@@ -111,13 +111,14 @@ func runInit(args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *component == "" {
-		return errors.New("--component is required")
-	}
-	if err := Init(*dir, *component); err != nil {
+	resolvedComponent, err := DefaultComponent(*component)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Initialized %s for %s.\n", *dir, *component)
+	if err := Init(*dir, resolvedComponent); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Initialized %s for %s.\n", *dir, resolvedComponent)
 	return nil
 }
 
@@ -387,6 +388,45 @@ func ResolveComponent(dir string, component string) (string, error) {
 		return "", err
 	}
 	return config.Component, nil
+}
+
+func DefaultComponent(component string) (string, error) {
+	component = strings.TrimSpace(component)
+	if component != "" {
+		return component, nil
+	}
+	if repo := gitRepositoryName(); repo != "" {
+		return repo, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	name := strings.TrimSpace(filepath.Base(cwd))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "", errors.New("--component is required because repository/folder name could not be inferred")
+	}
+	return name, nil
+}
+
+func gitRepositoryName() string {
+	remote := gitOutput("config", "--get", "remote.origin.url")
+	return RepositoryNameFromRemote(remote)
+}
+
+func RepositoryNameFromRemote(remote string) string {
+	remote = strings.TrimSuffix(strings.TrimSpace(remote), "/")
+	remote = strings.TrimSuffix(remote, ".git")
+	if remote == "" {
+		return ""
+	}
+	if schemeIndex := strings.Index(remote, "://"); schemeIndex >= 0 {
+		remote = remote[schemeIndex+len("://"):]
+	} else if colonIndex := strings.Index(remote, ":"); colonIndex >= 0 && !strings.Contains(remote[:colonIndex], "/") {
+		remote = remote[colonIndex+1:]
+	}
+	_, name := filepath.Split(remote)
+	return strings.TrimSpace(name)
 }
 
 func NewFragmentPath(dir string) (string, error) {

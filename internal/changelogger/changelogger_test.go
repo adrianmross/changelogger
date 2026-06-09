@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -125,5 +126,65 @@ func TestResolveComponentAllowsFlagOverride(t *testing.T) {
 	}
 	if component != "other" {
 		t.Fatalf("expected flag component override, got %s", component)
+	}
+}
+
+func TestRepositoryNameFromRemote(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/red-wiz/changelogger.git": "changelogger",
+		"git@github.com:red-wiz/changelogger.git":     "changelogger",
+		"ssh://git@github.com/red-wiz/changelogger":   "changelogger",
+		"https://github.com/red-wiz/changelogger/":    "changelogger",
+	}
+	for remote, want := range cases {
+		if got := RepositoryNameFromRemote(remote); got != want {
+			t.Fatalf("RepositoryNameFromRemote(%q) = %q, want %q", remote, got, want)
+		}
+	}
+}
+
+func TestInitInfersComponentFromGitRemote(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "remote", "add", "origin", "git@github.com:red-wiz/inferred-name.git")
+
+	dir := filepath.Join(repo, ".changelogs")
+	var stdout bytes.Buffer
+	current, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(current); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	if err := Run([]string{"init", "--dir", dir}, nil, &stdout, &stdout); err != nil {
+		t.Fatal(err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config Config
+	if err := json.Unmarshal(configData, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Component != "inferred-name" {
+		t.Fatalf("unexpected inferred component: %s", config.Component)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, output)
 	}
 }

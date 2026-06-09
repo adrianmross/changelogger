@@ -5,7 +5,7 @@
 Use the GitHub Action to install the released binary in workflows:
 
 ```yaml
-- uses: red-wiz/changelogger@v0.4.0
+- uses: red-wiz/changelogger@v0.5.0
   with:
     token: ${{ secrets.PRIV_GOMOD_INSTLR_PAT }}
 
@@ -15,11 +15,13 @@ Use the GitHub Action to install the released binary in workflows:
 Initialize a repository:
 
 ```sh
-changelogger init --component trqp_vdr_go
+changelogger init
 ```
 
 This writes `.changelogs/config.json`, so the component is project-local after
-initialization.
+initialization. By default the component is inferred from the git remote
+repository name, then the current folder name. Use `--component <name>` only
+when the Release Please component should differ from the repo/folder name.
 
 Developers add explicit changelog fragments. Fragment files use three-word
 random slugs, for example `.changelogs/amber-matrix-river.md`.
