@@ -2,14 +2,13 @@
 
 `changelogger` is a small, dependency-light Go CLI for explicit release intent.
 
-Use the setup action to install the released binary in workflows:
+Use the GitHub Action to install the released binary and run changelogger in workflows:
 
 ```yaml
-- uses: adrianmross/setup-changelogger-action@v1
+- uses: adrianmross/changelogger@v0.8.0
   with:
-    version: v0.7.0
-
-- run: changelogger check --base origin/main --pr
+    command: check
+    args: --base origin/main --pr
 ```
 
 Initialize a repository:
@@ -89,7 +88,6 @@ changelogger release-tag \
   --manifest-file .release-please-manifest.json
 ```
 
-The action is only a setup wrapper: it resolves a tagged changelogger release,
-downloads the matching binary asset, and puts the binary on `PATH`. The CLI
-release remains the published artifact that owns validation, fragment creation,
-release PR cleanup, and tag intent.
+The action installs the released binary and, when `command` is set, runs that
+command in the same step. Omit `command` when a workflow only needs
+`changelogger` added to `PATH`.

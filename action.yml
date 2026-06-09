@@ -11,7 +11,7 @@ inputs:
   version:
     description: 'changelogger release tag to install.'
     required: false
-    default: 'v0.7.0'
+    default: 'v0.8.0'
   repository:
     description: 'Repository that publishes changelogger release assets.'
     required: false
@@ -19,11 +19,39 @@ inputs:
   token:
     description: 'Optional GitHub token for private release repositories.'
     required: false
+  command:
+    description: 'Optional changelogger command to run after installation.'
+    required: false
+  args:
+    description: 'Optional arguments for the changelogger command.'
+    required: false
+  working-directory:
+    description: 'Directory where the optional changelogger command should run.'
+    required: false
+    default: '.'
 
 outputs:
   path:
     description: 'Path to the installed changelogger binary.'
     value: ${{ steps.install.outputs.path }}
+  stdout:
+    description: 'Captured stdout/stderr from the optional changelogger command.'
+    value: ${{ steps.run-command.outputs.stdout }}
+  should_tag:
+    description: 'release-tag should_tag output when command output includes it.'
+    value: ${{ steps.run-command.outputs.should_tag }}
+  tag:
+    description: 'release-tag tag output when command output includes it.'
+    value: ${{ steps.run-command.outputs.tag }}
+  reason:
+    description: 'release-tag reason output when command output includes it.'
+    value: ${{ steps.run-command.outputs.reason }}
+  number:
+    description: 'release-pr-info number output when command output includes it.'
+    value: ${{ steps.run-command.outputs.number }}
+  head_ref:
+    description: 'release-pr-info head_ref output when command output includes it.'
+    value: ${{ steps.run-command.outputs.head_ref }}
 
 runs:
   using: 'composite'
@@ -110,3 +138,37 @@ runs:
         "$binary" version
         echo "$install_dir" >> "$GITHUB_PATH"
         echo "path=$binary" >> "$GITHUB_OUTPUT"
+
+    - name: Run changelogger command
+      id: run-command
+      if: inputs.command != ''
+      shell: bash
+      env:
+        CHANGELOGGER_ARGS: ${{ inputs.args }}
+        CHANGELOGGER_BINARY: ${{ steps.install.outputs.path }}
+        CHANGELOGGER_COMMAND: ${{ inputs.command }}
+        CHANGELOGGER_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        output_file="${RUNNER_TEMP}/changelogger-command-output"
+        status=0
+
+        set +e
+        (
+          cd "$CHANGELOGGER_WORKING_DIRECTORY"
+          # CHANGELOGGER_ARGS is intentionally split by the shell so workflows can pass CLI flags.
+          "$CHANGELOGGER_BINARY" "$CHANGELOGGER_COMMAND" ${CHANGELOGGER_ARGS}
+        ) 2>&1 | tee "$output_file"
+        status=${PIPESTATUS[0]}
+        set -e
+
+        {
+          echo "stdout<<CHANGELOGGER_STDOUT"
+          cat "$output_file"
+          echo "CHANGELOGGER_STDOUT"
+        } >> "$GITHUB_OUTPUT"
+
+        grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$output_file" >> "$GITHUB_OUTPUT" || true
+
+        exit "$status"
