@@ -83,8 +83,12 @@ func TestInitWritesReadme(t *testing.T) {
 	if err := json.Unmarshal(configData, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Component != "trqp_vdr_go" {
-		t.Fatalf("unexpected component: %s", config.Component)
+	component, err := config.Component.Resolve(filepath.Dir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if component != "trqp_vdr_go" {
+		t.Fatalf("unexpected component: %s", component)
 	}
 }
 
@@ -120,7 +124,7 @@ func TestResolveComponentAllowsFlagOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	component, err := ResolveComponent(dir, "other")
+	component, err := ResolveComponent(dir, "other", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,8 +179,94 @@ func TestInitInfersComponentFromGitRemote(t *testing.T) {
 	if err := json.Unmarshal(configData, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Component != "inferred-name" {
-		t.Fatalf("unexpected inferred component: %s", config.Component)
+	component, err := config.Component.Resolve(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if component != "inferred-name" {
+		t.Fatalf("unexpected inferred component: %s", component)
+	}
+}
+
+func TestInitUsesOChainNameSource(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".ochain.json"), []byte(`{"name":"trqp_vdr_go"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(repo, ".changelogs")
+	var stdout bytes.Buffer
+	current, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(current); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	if err := Run([]string{"init", "--dir", dir}, nil, &stdout, &stdout); err != nil {
+		t.Fatal(err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config Config
+	if err := json.Unmarshal(configData, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Component.Source != ".ochain.json" || config.Component.JSONPath != "$.name" {
+		t.Fatalf("unexpected component source: %#v", config.Component)
+	}
+	component, err := ResolveComponent(dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if component != "trqp_vdr_go" {
+		t.Fatalf("unexpected resolved component: %s", component)
+	}
+}
+
+func TestResolveComponentUsesPackageConfig(t *testing.T) {
+	repo := t.TempDir()
+	serviceDir := filepath.Join(repo, "services", "chaincode")
+	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serviceDir, ".ochain.json"), []byte(`{"name":"chaincode_component"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(repo, ".changelogs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{
+  "packages": {
+    "chaincode": {
+      "path": "services/chaincode",
+      "component": {
+        "source": ".ochain.json",
+        "jsonPath": "$.name"
+      }
+    }
+  }
+}
+`)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	component, err := ResolveComponent(dir, "", "chaincode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if component != "chaincode_component" {
+		t.Fatalf("unexpected package component: %s", component)
 	}
 }
 

@@ -49,7 +49,19 @@ type Fragment struct {
 }
 
 type Config struct {
-	Component string `json:"component"`
+	Component ComponentConfig          `json:"component,omitempty"`
+	Packages  map[string]PackageConfig `json:"packages,omitempty"`
+}
+
+type PackageConfig struct {
+	Path      string          `json:"path,omitempty"`
+	Component ComponentConfig `json:"component,omitempty"`
+}
+
+type ComponentConfig struct {
+	Value    string `json:"value,omitempty"`
+	Source   string `json:"source,omitempty"`
+	JSONPath string `json:"jsonPath,omitempty"`
 }
 
 type Options struct {
@@ -63,6 +75,7 @@ type Options struct {
 	ManifestFile string
 	Remote       string
 	PRSJSON      string
+	Package      string
 }
 
 func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
@@ -95,27 +108,29 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) err
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
-  changelogger init [--component <name>]
-  changelogger new [--component <name>]
-  changelogger check [--component <name>] [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
+  changelogger init [--component <name>] [--component-source <file>] [--component-jsonpath <path>]
+  changelogger new [--component <name>] [--package <name>]
+  changelogger check [--component <name>] [--package <name>] [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
   changelogger consume
   changelogger release-pr-info --prs-json <json>
-  changelogger release-tag [--component <name>] --version-file .ochain.json --manifest-file .release-please-manifest.json`)
+  changelogger release-tag [--component <name>] [--package <name>] --version-file .ochain.json --manifest-file .release-please-manifest.json`)
 }
 
 func runInit(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	component := fs.String("component", "", "component name")
+	componentSource := fs.String("component-source", "", "JSON file to read the component from")
+	componentJSONPath := fs.String("component-jsonpath", "$.name", "JSON path for --component-source")
 	dir := fs.String("dir", defaultDir, "fragment directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	resolvedComponent, err := DefaultComponent(*component)
+	componentConfig, resolvedComponent, err := DefaultComponentConfig(*component, *componentSource, *componentJSONPath)
 	if err != nil {
 		return err
 	}
-	if err := Init(*dir, resolvedComponent); err != nil {
+	if err := InitWithComponentConfig(*dir, componentConfig); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "Initialized %s for %s.\n", *dir, resolvedComponent)
@@ -126,11 +141,12 @@ func runNew(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	component := fs.String("component", "", "component name")
+	packageName := fs.String("package", "", "package name from .changelogs/config.json")
 	dir := fs.String("dir", defaultDir, "fragment directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	resolvedComponent, err := ResolveComponent(*dir, *component)
+	resolvedComponent, err := ResolveComponent(*dir, *component, *packageName)
 	if err != nil {
 		return err
 	}
@@ -185,6 +201,9 @@ func runNew(args []string, stdin io.Reader, stdout io.Writer) error {
 		"bump: " + bump,
 		"type: " + changeType,
 	}
+	if strings.TrimSpace(*packageName) != "" {
+		lines = append(lines, "package: "+strings.TrimSpace(*packageName))
+	}
 	if version != "" {
 		lines = append(lines, "version: "+version)
 	}
@@ -209,6 +228,7 @@ func runCheck(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	component := fs.String("component", "", "component name")
+	packageName := fs.String("package", "", "package name from .changelogs/config.json")
 	dir := fs.String("dir", defaultDir, "fragment directory")
 	base := fs.String("base", "", "base git ref")
 	pr := fs.Bool("pr", false, "pull request mode")
@@ -217,7 +237,7 @@ func runCheck(args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	resolvedComponent, err := ResolveComponent(*dir, *component)
+	resolvedComponent, err := ResolveComponent(*dir, *component, *packageName)
 	if err != nil {
 		return err
 	}
@@ -287,6 +307,7 @@ func runReleaseTag(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("release-tag", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	component := fs.String("component", "", "component name")
+	packageName := fs.String("package", "", "package name from .changelogs/config.json")
 	dir := fs.String("dir", defaultDir, "fragment directory")
 	versionFile := fs.String("version-file", ".ochain.json", "JSON version file")
 	manifestFile := fs.String("manifest-file", ".release-please-manifest.json", "Release Please manifest")
@@ -294,7 +315,7 @@ func runReleaseTag(args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	resolvedComponent, err := ResolveComponent(*dir, *component)
+	resolvedComponent, err := ResolveComponent(*dir, *component, *packageName)
 	if err != nil {
 		return err
 	}
@@ -305,6 +326,7 @@ func runReleaseTag(args []string, stdout io.Writer) error {
 		VersionFile:  *versionFile,
 		ManifestFile: *manifestFile,
 		Remote:       *remote,
+		Package:      *packageName,
 	})
 	if err != nil {
 		return err
@@ -323,13 +345,25 @@ func ask(reader *bufio.Reader, stdout io.Writer, prompt string) (string, error) 
 }
 
 func Init(dir string, component string) error {
+	component = strings.TrimSpace(component)
 	if component == "" {
+		return errors.New("component is required")
+	}
+	return InitWithComponentConfig(dir, ComponentConfig{Value: component})
+}
+
+func InitWithComponentConfig(dir string, componentConfig ComponentConfig) error {
+	resolvedComponent, err := componentConfig.Resolve(configBaseDir(dir))
+	if err != nil {
+		return err
+	}
+	if resolvedComponent == "" {
 		return errors.New("component is required")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	config := Config{Component: component}
+	config := Config{Component: componentConfig}
 	configData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
@@ -350,11 +384,11 @@ The command writes a fragment under %[1]s with a three-word random slug.
 Use the printed PR title so Release Please can derive the version bump after
 the PR is merged.
 
-Run `+"`changelogger init --component %[2]s`"+` to recreate this setup.
+Run `+"`%[2]s`"+` to recreate this setup.
 
 Release PRs consume these fragments, update CHANGELOG.md, bump .ochain.json,
 and then create a tag for GoReleaser.
-`, dir, component)
+`, dir, recreateCommand(componentConfig, resolvedComponent))
 	return os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644)
 }
 
@@ -368,14 +402,13 @@ func LoadConfig(dir string) (Config, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
-	config.Component = strings.TrimSpace(config.Component)
-	if config.Component == "" {
-		return Config{}, fmt.Errorf("%s: component is required", path)
+	if !config.Component.Configured() && len(config.Packages) == 0 {
+		return Config{}, fmt.Errorf("%s: component or packages is required", path)
 	}
 	return config, nil
 }
 
-func ResolveComponent(dir string, component string) (string, error) {
+func ResolveComponent(dir string, component string, packageName string) (string, error) {
 	component = strings.TrimSpace(component)
 	if component != "" {
 		return component, nil
@@ -387,26 +420,157 @@ func ResolveComponent(dir string, component string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return config.Component, nil
+	baseDir := configBaseDir(dir)
+	packageName = strings.TrimSpace(packageName)
+	if packageName == "" {
+		if config.Component.Configured() {
+			return config.Component.Resolve(baseDir)
+		}
+		if len(config.Packages) == 1 {
+			for name, packageConfig := range config.Packages {
+				return packageConfig.Resolve(baseDir, name)
+			}
+		}
+		return "", fmt.Errorf("--package is required because %s defines multiple packages", filepath.Join(dir, configFileName))
+	}
+	packageConfig, ok := config.Packages[packageName]
+	if !ok {
+		return "", fmt.Errorf("%s: unknown package %q", filepath.Join(dir, configFileName), packageName)
+	}
+	return packageConfig.Resolve(baseDir, packageName)
 }
 
 func DefaultComponent(component string) (string, error) {
+	_, resolved, err := DefaultComponentConfig(component, "", "$.name")
+	return resolved, err
+}
+
+func DefaultComponentConfig(component string, componentSource string, componentJSONPath string) (ComponentConfig, string, error) {
 	component = strings.TrimSpace(component)
 	if component != "" {
-		return component, nil
+		config := ComponentConfig{Value: component}
+		return config, component, nil
+	}
+	componentSource = strings.TrimSpace(componentSource)
+	if componentSource != "" {
+		config := ComponentConfig{Source: componentSource, JSONPath: componentJSONPath}
+		resolved, err := config.Resolve(".")
+		return config, resolved, err
+	}
+	if _, err := os.Stat(".ochain.json"); err == nil {
+		config := ComponentConfig{Source: ".ochain.json", JSONPath: "$.name"}
+		if resolved, err := config.Resolve("."); err == nil && resolved != "" {
+			return config, resolved, nil
+		}
 	}
 	if repo := gitRepositoryName(); repo != "" {
-		return repo, nil
+		config := ComponentConfig{Value: repo}
+		return config, repo, nil
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return ComponentConfig{}, "", err
 	}
 	name := strings.TrimSpace(filepath.Base(cwd))
 	if name == "" || name == "." || name == string(filepath.Separator) {
-		return "", errors.New("--component is required because repository/folder name could not be inferred")
+		return ComponentConfig{}, "", errors.New("--component is required because repository/folder name could not be inferred")
 	}
-	return name, nil
+	config := ComponentConfig{Value: name}
+	return config, name, nil
+}
+
+func (config ComponentConfig) Configured() bool {
+	return strings.TrimSpace(config.Value) != "" || strings.TrimSpace(config.Source) != ""
+}
+
+func (config ComponentConfig) IsZero() bool {
+	return !config.Configured()
+}
+
+func (config ComponentConfig) Resolve(baseDir string) (string, error) {
+	value := strings.TrimSpace(config.Value)
+	if value != "" {
+		return value, nil
+	}
+	source := strings.TrimSpace(config.Source)
+	if source == "" {
+		return "", errors.New("component is required")
+	}
+	if !filepath.IsAbs(source) {
+		source = filepath.Join(baseDir, source)
+	}
+	jsonPath := strings.TrimSpace(config.JSONPath)
+	if jsonPath == "" {
+		jsonPath = "$.name"
+	}
+	value, err := jsonString(source, jsonPath)
+	if err != nil {
+		return "", err
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s: component value at %s is required", source, jsonPath)
+	}
+	return value, nil
+}
+
+func (config ComponentConfig) MarshalJSON() ([]byte, error) {
+	if strings.TrimSpace(config.Source) == "" {
+		return json.Marshal(strings.TrimSpace(config.Value))
+	}
+	type componentObject ComponentConfig
+	return json.Marshal(componentObject(config))
+}
+
+func (config *ComponentConfig) UnmarshalJSON(data []byte) error {
+	var literal string
+	if err := json.Unmarshal(data, &literal); err == nil {
+		config.Value = strings.TrimSpace(literal)
+		config.Source = ""
+		config.JSONPath = ""
+		return nil
+	}
+	type componentObject ComponentConfig
+	var object componentObject
+	if err := json.Unmarshal(data, &object); err != nil {
+		return err
+	}
+	config.Value = strings.TrimSpace(object.Value)
+	config.Source = strings.TrimSpace(object.Source)
+	config.JSONPath = strings.TrimSpace(object.JSONPath)
+	return nil
+}
+
+func (config PackageConfig) Resolve(baseDir string, packageName string) (string, error) {
+	packageBaseDir := baseDir
+	if path := strings.TrimSpace(config.Path); path != "" {
+		packageBaseDir = filepath.Join(baseDir, path)
+	}
+	if config.Component.Configured() {
+		return config.Component.Resolve(packageBaseDir)
+	}
+	if packageName != "" {
+		return packageName, nil
+	}
+	return "", errors.New("package component is required")
+}
+
+func configBaseDir(dir string) string {
+	clean := filepath.Clean(dir)
+	if clean == "." {
+		return "."
+	}
+	return filepath.Dir(clean)
+}
+
+func recreateCommand(componentConfig ComponentConfig, resolvedComponent string) string {
+	if strings.TrimSpace(componentConfig.Source) != "" && strings.TrimSpace(componentConfig.JSONPath) == "$.name" {
+		return "changelogger init"
+	}
+	if strings.TrimSpace(componentConfig.Source) != "" {
+		return fmt.Sprintf("changelogger init --component-source %s --component-jsonpath %s", componentConfig.Source, componentConfig.JSONPath)
+	}
+	return fmt.Sprintf("changelogger init --component %s", resolvedComponent)
 }
 
 func gitRepositoryName() string {
@@ -735,12 +899,40 @@ func jsonString(file string, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var object map[string]any
-	if err := json.Unmarshal(data, &object); err != nil {
+	var payload any
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return "", err
 	}
-	value, _ := object[key].(string)
-	return value, nil
+	value := jsonValue(payload, key)
+	stringValue, _ := value.(string)
+	return stringValue, nil
+}
+
+func jsonValue(payload any, path string) any {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	object, ok := payload.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if !strings.HasPrefix(path, "$.") {
+		return object[path]
+	}
+	current := any(object)
+	for _, part := range strings.Split(strings.TrimPrefix(path, "$."), ".") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil
+		}
+		currentObject, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current = currentObject[part]
+	}
+	return current
 }
 
 func gitOutput(args ...string) string {
