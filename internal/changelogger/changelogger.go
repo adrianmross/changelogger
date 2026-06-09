@@ -21,6 +21,12 @@ import (
 const defaultDir = ".changelogs"
 
 var (
+	Version = "dev"
+	Commit  = "none"
+	Date    = "unknown"
+)
+
+var (
 	validBumps = map[string]bool{"patch": true, "minor": true, "major": true}
 	validTypes = map[string]bool{"fix": true, "feat": true, "deps": true}
 	semverRE   = regexp.MustCompile(`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`)
@@ -64,7 +70,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) err
 	case "release-tag":
 		return runReleaseTag(args[1:], stdout)
 	case "version":
-		fmt.Fprintln(stdout, "changelogger dev")
+		fmt.Fprintf(stdout, "changelogger %s (%s, %s)\n", Version, Commit, Date)
 		return nil
 	default:
 		usage(stderr)

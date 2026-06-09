@@ -1,0 +1,39 @@
+version: 2
+
+project_name: changelogger
+
+before:
+  hooks:
+    - go mod download
+    - go test ./...
+
+builds:
+  - id: changelogger
+    main: ./cmd/changelogger
+    binary: changelogger
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/red-wiz/changelogger/internal/changelogger.Version={{.Version}} -X github.com/red-wiz/changelogger/internal/changelogger.Commit={{.ShortCommit}} -X github.com/red-wiz/changelogger/internal/changelogger.Date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  draft: false
+  prerelease: auto

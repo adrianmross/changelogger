@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v0.1.0)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || (github.event_name != 'workflow_dispatch' && github.ref_type == 'tag' && github.ref_name) || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate tag
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+
+          if [ -z "$tag" ]; then
+            echo "Release tag could not be determined." >&2
+            exit 1
+          fi
+
+          if ! echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid tag format: $tag" >&2
+            echo "Expected semantic version tag like v1.2.3 or v1.2.3-rc.1" >&2
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git fetch --tags --force
+            if ! git show-ref --tags --verify --quiet "refs/tags/$tag"; then
+              echo "Tag '$tag' does not exist in repository." >&2
+              exit 1
+            fi
+          fi
+
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Checkout tag
+        if: github.event_name == 'workflow_dispatch'
+        run: git checkout "${RELEASE_TAG}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Cache Go modules
+        uses: actions/cache@v5.0.5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Go test
+        run: go test ./...
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7.2.1
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
