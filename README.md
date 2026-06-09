@@ -2,6 +2,16 @@
 
 `changelogger` is a small, dependency-light Go CLI for chaincode release intent.
 
+Use the GitHub Action to install the released binary in workflows:
+
+```yaml
+- uses: red-wiz/changelogger@v0.3.0
+  with:
+    token: ${{ secrets.PRIV_GOMOD_INSTLR_PAT }}
+
+- run: changelogger check --component trqp_vdr_go --base origin/main --pr
+```
+
 Initialize a repository:
 
 ```sh
