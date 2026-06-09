@@ -1,13 +1,13 @@
 # changelogger
 
-`changelogger` is a small, dependency-light Go CLI for chaincode release intent.
+`changelogger` is a small, dependency-light Go CLI for explicit release intent.
 
-Use the GitHub Action to install the released binary in workflows:
+Use the setup action to install the released binary in workflows:
 
 ```yaml
-- uses: red-wiz/changelogger@v0.6.0
+- uses: adrianmross/setup-changelogger-action@v1
   with:
-    token: ${{ secrets.PRIV_GOMOD_INSTLR_PAT }}
+    version: v0.7.0
 
 - run: changelogger check --base origin/main --pr
 ```
@@ -19,7 +19,7 @@ changelogger init
 ```
 
 This writes `.changelogs/config.json`, so the component is project-local after
-initialization. By default the component is read from `.ochain.json` at
+initialization. By default the component is read from `package.json` at
 `$.name` when that file exists. Otherwise it is inferred from the git remote
 repository name, then the current folder name. Use `--component <name>` only
 when the Release Please component should differ from the project metadata.
@@ -28,7 +28,7 @@ Single package config can either store a literal component:
 
 ```json
 {
-  "component": "trqp_vdr_go"
+  "component": "example-service"
 }
 ```
 
@@ -37,7 +37,7 @@ or point at the source of truth:
 ```json
 {
   "component": {
-    "source": ".ochain.json",
+    "source": "package.json",
     "jsonPath": "$.name"
   }
 }
@@ -48,10 +48,10 @@ Monorepos can define package entries and select them with `--package`:
 ```json
 {
   "packages": {
-    "trqp_vdr_go": {
-      "path": "chaincodes/trqp_vdr_go",
+    "example-service": {
+      "path": "services/example-service",
       "component": {
-        "source": ".ochain.json",
+        "source": "package.json",
         "jsonPath": "$.name"
       }
     }
@@ -85,7 +85,7 @@ GoReleaser:
 ```sh
 changelogger consume
 changelogger release-tag \
-  --version-file .ochain.json \
+  --version-file package.json \
   --manifest-file .release-please-manifest.json
 ```
 

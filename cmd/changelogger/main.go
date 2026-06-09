@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/red-wiz/changelogger/internal/changelogger"
+	"github.com/adrianmross/changelogger/internal/changelogger"
 )
 
 func main() {

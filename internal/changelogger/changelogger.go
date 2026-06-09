@@ -113,7 +113,7 @@ func usage(w io.Writer) {
   changelogger check [--component <name>] [--package <name>] [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
   changelogger consume
   changelogger release-pr-info --prs-json <json>
-  changelogger release-tag [--component <name>] [--package <name>] --version-file .ochain.json --manifest-file .release-please-manifest.json`)
+  changelogger release-tag [--component <name>] [--package <name>] --version-file package.json --manifest-file .release-please-manifest.json`)
 }
 
 func runInit(args []string, stdout io.Writer) error {
@@ -309,7 +309,7 @@ func runReleaseTag(args []string, stdout io.Writer) error {
 	component := fs.String("component", "", "component name")
 	packageName := fs.String("package", "", "package name from .changelogs/config.json")
 	dir := fs.String("dir", defaultDir, "fragment directory")
-	versionFile := fs.String("version-file", ".ochain.json", "JSON version file")
+	versionFile := fs.String("version-file", "package.json", "JSON version file")
 	manifestFile := fs.String("manifest-file", ".release-please-manifest.json", "Release Please manifest")
 	remote := fs.String("remote", "origin", "git remote")
 	if err := fs.Parse(args); err != nil {
@@ -374,7 +374,7 @@ func InitWithComponentConfig(dir string, componentConfig ComponentConfig) error 
 	}
 	readme := fmt.Sprintf(`# Changelog Fragments
 
-Use changelogger for user-visible chaincode changes:
+Use changelogger for user-visible changes:
 
 `+"```sh"+`
 changelogger new
@@ -386,7 +386,7 @@ the PR is merged.
 
 Run `+"`%[2]s`"+` to recreate this setup.
 
-Release PRs consume these fragments, update CHANGELOG.md, bump .ochain.json,
+Release PRs consume these fragments, update CHANGELOG.md, bump the project version,
 and then create a tag for GoReleaser.
 `, dir, recreateCommand(componentConfig, resolvedComponent))
 	return os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644)
@@ -457,8 +457,8 @@ func DefaultComponentConfig(component string, componentSource string, componentJ
 		resolved, err := config.Resolve(".")
 		return config, resolved, err
 	}
-	if _, err := os.Stat(".ochain.json"); err == nil {
-		config := ComponentConfig{Source: ".ochain.json", JSONPath: "$.name"}
+	if _, err := os.Stat("package.json"); err == nil {
+		config := ComponentConfig{Source: "package.json", JSONPath: "$.name"}
 		if resolved, err := config.Resolve("."); err == nil && resolved != "" {
 			return config, resolved, nil
 		}

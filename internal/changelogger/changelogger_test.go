@@ -13,7 +13,7 @@ import (
 func TestParseAndValidateFragment(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "bootstrap.md")
-	err := os.WriteFile(file, []byte("---\ncomponent: trqp_vdr_go\nbump: patch\ntype: fix\n---\n\nFix bootstrap debug flow.\n"), 0o644)
+	err := os.WriteFile(file, []byte("---\ncomponent: example-service\nbump: patch\ntype: fix\n---\n\nFix bootstrap debug flow.\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,10 +22,10 @@ func TestParseAndValidateFragment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if errors := ValidateFragment(fragment, "trqp_vdr_go"); len(errors) != 0 {
+	if errors := ValidateFragment(fragment, "example-service"); len(errors) != 0 {
 		t.Fatalf("expected valid fragment, got %v", errors)
 	}
-	if got := ReleasePleaseSubject(fragment); got != "fix(trqp_vdr_go): Fix bootstrap debug flow" {
+	if got := ReleasePleaseSubject(fragment); got != "fix(example-service): Fix bootstrap debug flow" {
 		t.Fatalf("unexpected subject: %s", got)
 	}
 }
@@ -33,12 +33,12 @@ func TestParseAndValidateFragment(t *testing.T) {
 func TestValidateReleaseSignalRequiresMatchingTitle(t *testing.T) {
 	fragment := Fragment{
 		File:     ".changelogs/bootstrap.md",
-		Meta:     map[string]string{"component": "trqp_vdr_go", "bump": "patch", "type": "fix"},
+		Meta:     map[string]string{"component": "example-service", "bump": "patch", "type": "fix"},
 		Body:     "Fix bootstrap debug flow.",
 		BodyLine: "Fix bootstrap debug flow.",
 	}
 
-	if errors := ValidateReleaseSignal([]Fragment{fragment}, "fix(trqp_vdr_go): Fix bootstrap debug flow", ""); len(errors) != 0 {
+	if errors := ValidateReleaseSignal([]Fragment{fragment}, "fix(example-service): Fix bootstrap debug flow", ""); len(errors) != 0 {
 		t.Fatalf("expected matching title, got %v", errors)
 	}
 	if errors := ValidateReleaseSignal([]Fragment{fragment}, "fix: something else", ""); len(errors) == 0 {
@@ -47,11 +47,11 @@ func TestValidateReleaseSignalRequiresMatchingTitle(t *testing.T) {
 }
 
 func TestReleasePRInfo(t *testing.T) {
-	number, head, err := ReleasePRInfo(`[{"number":123,"headBranchName":"release-please--branches--main--components--trqp_vdr_go"}]`)
+	number, head, err := ReleasePRInfo(`[{"number":123,"headBranchName":"release-please--branches--main--components--example-service"}]`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if number != "123" || head != "release-please--branches--main--components--trqp_vdr_go" {
+	if number != "123" || head != "release-please--branches--main--components--example-service" {
 		t.Fatalf("unexpected release PR info: %s %s", number, head)
 	}
 }
@@ -60,7 +60,7 @@ func TestInitWritesReadme(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".changelogs")
 	var stdout bytes.Buffer
 
-	if err := Run([]string{"init", "--component", "trqp_vdr_go", "--dir", dir}, nil, &stdout, &stdout); err != nil {
+	if err := Run([]string{"init", "--component", "example-service", "--dir", dir}, nil, &stdout, &stdout); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,7 +71,7 @@ func TestInitWritesReadme(t *testing.T) {
 	if !bytes.Contains(readme, []byte("changelogger new")) {
 		t.Fatalf("README did not include new command:\n%s", readme)
 	}
-	if bytes.Contains(readme, []byte("changelogger new --component trqp_vdr_go")) {
+	if bytes.Contains(readme, []byte("changelogger new --component example-service")) {
 		t.Fatalf("README still documented repeated component command:\n%s", readme)
 	}
 
@@ -87,7 +87,7 @@ func TestInitWritesReadme(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if component != "trqp_vdr_go" {
+	if component != "example-service" {
 		t.Fatalf("unexpected component: %s", component)
 	}
 }
@@ -97,7 +97,7 @@ func TestNewUsesThreeWordSlug(t *testing.T) {
 	input := bytes.NewBufferString("patch\nfix\nFix bootstrap debug flow.\n\n")
 	var stdout bytes.Buffer
 
-	if err := Init(dir, "trqp_vdr_go"); err != nil {
+	if err := Init(dir, "example-service"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +120,7 @@ func TestNewUsesThreeWordSlug(t *testing.T) {
 
 func TestResolveComponentAllowsFlagOverride(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".changelogs")
-	if err := Init(dir, "trqp_vdr_go"); err != nil {
+	if err := Init(dir, "example-service"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -135,10 +135,10 @@ func TestResolveComponentAllowsFlagOverride(t *testing.T) {
 
 func TestRepositoryNameFromRemote(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/red-wiz/changelogger.git": "changelogger",
-		"git@github.com:red-wiz/changelogger.git":     "changelogger",
-		"ssh://git@github.com/red-wiz/changelogger":   "changelogger",
-		"https://github.com/red-wiz/changelogger/":    "changelogger",
+		"https://github.com/adrianmross/changelogger.git": "changelogger",
+		"git@github.com:adrianmross/changelogger.git":     "changelogger",
+		"ssh://git@github.com/adrianmross/changelogger":   "changelogger",
+		"https://github.com/adrianmross/changelogger/":    "changelogger",
 	}
 	for remote, want := range cases {
 		if got := RepositoryNameFromRemote(remote); got != want {
@@ -150,7 +150,7 @@ func TestRepositoryNameFromRemote(t *testing.T) {
 func TestInitInfersComponentFromGitRemote(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
-	runGit(t, repo, "remote", "add", "origin", "git@github.com:red-wiz/inferred-name.git")
+	runGit(t, repo, "remote", "add", "origin", "git@github.com:adrianmross/inferred-name.git")
 
 	dir := filepath.Join(repo, ".changelogs")
 	var stdout bytes.Buffer
@@ -188,9 +188,9 @@ func TestInitInfersComponentFromGitRemote(t *testing.T) {
 	}
 }
 
-func TestInitUsesOChainNameSource(t *testing.T) {
+func TestInitUsesPackageNameSource(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repo, ".ochain.json"), []byte(`{"name":"trqp_vdr_go"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"name":"example-service"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(repo, ".changelogs")
@@ -220,25 +220,25 @@ func TestInitUsesOChainNameSource(t *testing.T) {
 	if err := json.Unmarshal(configData, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Component.Source != ".ochain.json" || config.Component.JSONPath != "$.name" {
+	if config.Component.Source != "package.json" || config.Component.JSONPath != "$.name" {
 		t.Fatalf("unexpected component source: %#v", config.Component)
 	}
 	component, err := ResolveComponent(dir, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if component != "trqp_vdr_go" {
+	if component != "example-service" {
 		t.Fatalf("unexpected resolved component: %s", component)
 	}
 }
 
 func TestResolveComponentUsesPackageConfig(t *testing.T) {
 	repo := t.TempDir()
-	serviceDir := filepath.Join(repo, "services", "chaincode")
+	serviceDir := filepath.Join(repo, "services", "api")
 	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(serviceDir, ".ochain.json"), []byte(`{"name":"chaincode_component"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(serviceDir, "package.json"), []byte(`{"name":"service-component"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(repo, ".changelogs")
@@ -247,10 +247,10 @@ func TestResolveComponentUsesPackageConfig(t *testing.T) {
 	}
 	config := []byte(`{
   "packages": {
-    "chaincode": {
-      "path": "services/chaincode",
+    "api": {
+      "path": "services/api",
       "component": {
-        "source": ".ochain.json",
+        "source": "package.json",
         "jsonPath": "$.name"
       }
     }
@@ -261,11 +261,11 @@ func TestResolveComponentUsesPackageConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	component, err := ResolveComponent(dir, "", "chaincode")
+	component, err := ResolveComponent(dir, "", "api")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if component != "chaincode_component" {
+	if component != "service-component" {
 		t.Fatalf("unexpected package component: %s", component)
 	}
 }

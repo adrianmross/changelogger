@@ -1,7 +1,7 @@
 name: 'Setup changelogger'
 description: 'Install the changelogger CLI from a released binary asset.'
 
-author: 'Wiz Engineering'
+author: 'Adrian Ross'
 
 branding:
   color: 'blue'
@@ -11,14 +11,14 @@ inputs:
   version:
     description: 'changelogger release tag to install.'
     required: false
-    default: 'v0.6.0'
+    default: 'v0.7.0'
   repository:
     description: 'Repository that publishes changelogger release assets.'
     required: false
-    default: 'red-wiz/changelogger'
+    default: 'adrianmross/changelogger'
   token:
-    description: 'GitHub token with read access to red-wiz/changelogger releases.'
-    required: true
+    description: 'Optional GitHub token for private release repositories.'
+    required: false
 
 outputs:
   path:
@@ -74,48 +74,16 @@ runs:
         echo "install-dir=$install_dir" >> "$GITHUB_OUTPUT"
         echo "os=$os" >> "$GITHUB_OUTPUT"
 
-    - name: Resolve release asset
-      id: asset
-      uses: actions/github-script@v8
-      env:
-        CHANGELOGGER_ARCHIVE: ${{ steps.platform.outputs.archive }}
-        CHANGELOGGER_REPOSITORY: ${{ inputs.repository }}
-        CHANGELOGGER_VERSION: ${{ inputs.version }}
-      with:
-        github-token: ${{ inputs.token }}
-        script: |
-          const repository = process.env.CHANGELOGGER_REPOSITORY;
-          const [owner, repo] = repository.split("/", 2);
-          if (!owner || !repo) {
-            core.setFailed(`Invalid changelogger repository: ${repository}`);
-            return;
-          }
-
-          const release = await github.rest.repos.getReleaseByTag({
-            owner,
-            repo,
-            tag: process.env.CHANGELOGGER_VERSION,
-          });
-
-          const archive = process.env.CHANGELOGGER_ARCHIVE;
-          const asset = release.data.assets.find((entry) => entry.name === archive);
-          if (!asset) {
-            core.setFailed(`Release asset not found: ${archive}`);
-            return;
-          }
-
-          core.setOutput("asset-id", String(asset.id));
-
     - name: Install changelogger
       id: install
       shell: bash
       env:
         CHANGELOGGER_ARCHIVE: ${{ steps.platform.outputs.archive }}
-        CHANGELOGGER_ASSET_ID: ${{ steps.asset.outputs.asset-id }}
         CHANGELOGGER_INSTALL_DIR: ${{ steps.platform.outputs.install-dir }}
         CHANGELOGGER_OS: ${{ steps.platform.outputs.os }}
         CHANGELOGGER_REPOSITORY: ${{ inputs.repository }}
         CHANGELOGGER_TOKEN: ${{ inputs.token }}
+        CHANGELOGGER_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
 
@@ -123,14 +91,13 @@ runs:
         install_dir="${CHANGELOGGER_INSTALL_DIR}"
         mkdir -p "$install_dir"
 
-        api_base="${GITHUB_API_URL:-https://api.github.com}"
+        download_url="${GITHUB_SERVER_URL:-https://github.com}/${CHANGELOGGER_REPOSITORY}/releases/download/${CHANGELOGGER_VERSION}/${archive}"
+        curl_args=(-fsSL -o "${RUNNER_TEMP}/${archive}")
+        if [[ -n "${CHANGELOGGER_TOKEN}" ]]; then
+          curl_args+=(-H "Authorization: Bearer ${CHANGELOGGER_TOKEN}")
+        fi
 
-        curl -fsSL \
-          -H "Authorization: Bearer ${CHANGELOGGER_TOKEN}" \
-          -H "Accept: application/octet-stream" \
-          -H "X-GitHub-Api-Version: 2022-11-28" \
-          -o "${RUNNER_TEMP}/${archive}" \
-          "${api_base}/repos/${CHANGELOGGER_REPOSITORY}/releases/assets/${CHANGELOGGER_ASSET_ID}"
+        curl "${curl_args[@]}" "$download_url"
 
         tar -xzf "${RUNNER_TEMP}/${archive}" -C "$install_dir"
 
