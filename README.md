@@ -5,7 +5,7 @@
 Use the GitHub Action to install the released binary and run changelogger in workflows:
 
 ```yaml
-- uses: adrianmross/changelogger@v0.9.0
+- uses: adrianmross/changelogger@v0.10.0
   with:
     command: check
     args: --base origin/main --pr
@@ -21,7 +21,7 @@ This writes `.changelogs/config.json`, so the component is project-local after
 initialization. By default the component is read from `package.json` at
 `$.name` when that file exists. Otherwise it is inferred from the git remote
 repository name, then the current folder name. Use `--component <name>` only
-when the Release Please component should differ from the project metadata.
+when the release component should differ from the project metadata.
 
 Single package config can either store a literal component:
 
@@ -54,11 +54,11 @@ Monorepos can define package entries and select them with `--package`:
 }
 ```
 
-When `component` is omitted, changelogger uses the package key as the Release
-Please component. If the package key is path-like, such as `services/api`, the
+When `component` is omitted, changelogger uses the package key as the release
+component. If the package key is path-like, such as `services/api`, the
 path basename is used. The `path` value is also used as a fallback.
 
-Use `component` only when the Release Please component should intentionally
+Use `component` only when the release component should intentionally
 differ from the package key or path:
 
 ```json
@@ -77,14 +77,16 @@ differ from the package key or path:
 
 The source path is relative to the package path.
 
-Developers add explicit changelog fragments. Fragment files use three-word
-random slugs, for example `.changelogs/amber-matrix-river.md`.
+Developers add explicit changelog fragments. Changelogger gives each fragment a
+unique name.
 
 ```sh
-changelogger new
+changelogger
 ```
 
-CI validates the fragment and the PR title that Release Please will consume:
+`changelogger new` is also supported as an explicit alias.
+
+CI validates the fragment and the PR title that release automation will consume:
 
 ```sh
 changelogger check --base origin/main --pr \
@@ -92,9 +94,8 @@ changelogger check --base origin/main --pr \
   --pr-body "$PR_BODY"
 ```
 
-Release workflows use the same binary to remove consumed fragments from the
-Release Please PR and to decide whether a merged release PR should be tagged for
-GoReleaser:
+Release workflows use the same binary to remove consumed fragments and decide
+whether the merged commit should be tagged:
 
 ```sh
 changelogger consume

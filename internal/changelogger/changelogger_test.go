@@ -56,6 +56,18 @@ func TestReleasePRInfo(t *testing.T) {
 	}
 }
 
+func TestReleaseInfoCommand(t *testing.T) {
+	var stdout bytes.Buffer
+
+	err := Run([]string{"release-info", "--prs-json", `[{"number":123,"headBranchName":"release-branch"}]`}, nil, &stdout, &stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); !bytes.Contains([]byte(got), []byte("number=123\nhead_ref=release-branch\n")) {
+		t.Fatalf("unexpected release-info output: %s", got)
+	}
+}
+
 func TestInitWritesReadme(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".changelogs")
 	var stdout bytes.Buffer
@@ -68,11 +80,17 @@ func TestInitWritesReadme(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(readme, []byte("changelogger new")) {
-		t.Fatalf("README did not include new command:\n%s", readme)
+	if !bytes.Contains(readme, []byte("changelogger\n")) {
+		t.Fatalf("README did not include default changelogger command:\n%s", readme)
 	}
 	if bytes.Contains(readme, []byte("changelogger new --component example-service")) {
 		t.Fatalf("README still documented repeated component command:\n%s", readme)
+	}
+	if bytes.Contains(readme, []byte("three-word random slug")) {
+		t.Fatalf("README exposed implementation-specific slug language:\n%s", readme)
+	}
+	if bytes.Contains(readme, []byte("Release Please")) || bytes.Contains(readme, []byte("GoReleaser")) {
+		t.Fatalf("README exposed release-tool-specific language:\n%s", readme)
 	}
 
 	configData, err := os.ReadFile(filepath.Join(dir, "config.json"))
@@ -115,6 +133,64 @@ func TestNewUsesThreeWordSlug(t *testing.T) {
 	name := filepath.Base(files[0])
 	if !regexp.MustCompile(`^[a-z]+-[a-z]+-[a-z]+\.md$`).MatchString(name) {
 		t.Fatalf("expected three-word slug filename, got %s", name)
+	}
+}
+
+func TestRunWithoutCommandCreatesFragment(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".changelogs")
+	input := bytes.NewBufferString("patch\nfix\nFix bootstrap debug flow.\n\n")
+	var stdout bytes.Buffer
+
+	if err := Init(dir, "example-service"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run([]string{"--dir", dir}, input, &stdout, &stdout); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := FragmentFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one fragment, got %d", len(files))
+	}
+}
+
+func TestBareRunCreatesFragment(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".changelogs")
+	input := bytes.NewBufferString("patch\nfix\nFix bootstrap debug flow.\n\n")
+	var stdout bytes.Buffer
+
+	if err := Init(dir, "example-service"); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(current); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	if err := Run(nil, input, &stdout, &stdout); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := FragmentFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one fragment, got %d", len(files))
 	}
 }
 

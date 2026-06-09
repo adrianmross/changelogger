@@ -79,9 +79,8 @@ type Options struct {
 }
 
 func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
-	if len(args) == 0 {
-		usage(stderr)
-		return errors.New("missing command")
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return runNew(args, stdin, stdout)
 	}
 
 	switch args[0] {
@@ -93,7 +92,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) err
 		return runCheck(args[1:], stdout)
 	case "consume":
 		return runConsume(args[1:], stdout)
-	case "release-pr-info":
+	case "release-info", "release-pr-info":
 		return runReleasePRInfo(args[1:], stdout)
 	case "release-tag":
 		return runReleaseTag(args[1:], stdout)
@@ -108,11 +107,12 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) err
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
+  changelogger [--component <name>] [--package <name>]
   changelogger init [--component <name>] [--component-source <file>] [--component-jsonpath <path>]
   changelogger new [--component <name>] [--package <name>]
   changelogger check [--component <name>] [--package <name>] [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
   changelogger consume
-  changelogger release-pr-info --prs-json <json>
+  changelogger release-info --prs-json <json>
   changelogger release-tag [--component <name>] [--package <name>] --version-file package.json --manifest-file .release-please-manifest.json`)
 }
 
@@ -163,7 +163,7 @@ func runNew(args []string, stdin io.Reader, stdout io.Writer) error {
 	if bump == "minor" || bump == "major" {
 		defaultType = "feat"
 	}
-	changeType, err := ask(reader, stdout, fmt.Sprintf("Release Please type (fix/feat/deps) [%s]: ", defaultType))
+	changeType, err := ask(reader, stdout, fmt.Sprintf("Release type (fix/feat/deps) [%s]: ", defaultType))
 	if err != nil {
 		return err
 	}
@@ -217,7 +217,7 @@ func runNew(args []string, stdin io.Reader, stdout io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "Wrote %s\n", path)
-	fmt.Fprintf(stdout, "Use this PR title so Release Please sees the release intent:\n%s\n", ReleasePleaseSubject(fragment))
+	fmt.Fprintf(stdout, "Use this PR title so release automation sees the release intent:\n%s\n", ReleasePleaseSubject(fragment))
 	if version != "" {
 		fmt.Fprintf(stdout, "Add this to the PR body:\nRelease-As: %s\n", version)
 	}
@@ -289,9 +289,9 @@ func runConsume(args []string, stdout io.Writer) error {
 }
 
 func runReleasePRInfo(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("release-pr-info", flag.ContinueOnError)
+	fs := flag.NewFlagSet("release-info", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	prsJSON := fs.String("prs-json", os.Getenv("CHANGELOGGER_RELEASE_PLEASE_PRS"), "Release Please prs output JSON")
+	prsJSON := fs.String("prs-json", firstNonEmpty(os.Getenv("CHANGELOGGER_RELEASE_PRS"), os.Getenv("CHANGELOGGER_RELEASE_PLEASE_PRS")), "release output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -310,7 +310,7 @@ func runReleaseTag(args []string, stdout io.Writer) error {
 	packageName := fs.String("package", "", "package name from .changelogs/config.json")
 	dir := fs.String("dir", defaultDir, "fragment directory")
 	versionFile := fs.String("version-file", "package.json", "JSON version file")
-	manifestFile := fs.String("manifest-file", ".release-please-manifest.json", "Release Please manifest")
+	manifestFile := fs.String("manifest-file", ".release-please-manifest.json", "release manifest")
 	remote := fs.String("remote", "origin", "git remote")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -342,6 +342,15 @@ func ask(reader *bufio.Reader, stdout io.Writer, prompt string) (string, error) 
 		return "", err
 	}
 	return strings.TrimSpace(value), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func Init(dir string, component string) error {
@@ -377,17 +386,17 @@ func InitWithComponentConfig(dir string, componentConfig ComponentConfig) error 
 Use changelogger for user-visible changes:
 
 `+"```sh"+`
-changelogger new
+changelogger
 `+"```"+`
 
-The command writes a fragment under %[1]s with a three-word random slug.
-Use the printed PR title so Release Please can derive the version bump after
-the PR is merged.
+The command writes a changelog fragment under %[1]s and gives it a unique name.
+Use the printed PR title so release automation can derive the intended version
+bump.
 
 Run `+"`%[2]s`"+` to recreate this setup.
 
-Release PRs consume these fragments, update CHANGELOG.md, bump the project version,
-and then create a tag for GoReleaser.
+Release automation consumes these fragments after they are included in a
+release.
 `, dir, recreateCommand(componentConfig, resolvedComponent))
 	return os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644)
 }
@@ -755,7 +764,7 @@ func ValidateReleaseSignal(fragments []Fragment, title string, body string) []st
 	}
 	var errors []string
 	if !matched {
-		errors = append(errors, "PR title must match one changelog fragment's Release Please subject:\n  - "+strings.Join(subjects, "\n  - "))
+		errors = append(errors, "PR title must match one changelog fragment's release subject:\n  - "+strings.Join(subjects, "\n  - "))
 	}
 	for _, fragment := range fragments {
 		version := fragment.Meta["version"]
@@ -810,7 +819,7 @@ func ignoredChange(file string) bool {
 
 func ReleasePRInfo(raw string) (string, string, error) {
 	if strings.TrimSpace(raw) == "" {
-		return "", "", errors.New("Release Please did not report a release PR")
+		return "", "", errors.New("release automation did not report a release PR")
 	}
 	var payload any
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
@@ -819,13 +828,13 @@ func ReleasePRInfo(raw string) (string, string, error) {
 	item := payload
 	if list, ok := payload.([]any); ok {
 		if len(list) == 0 {
-			return "", "", errors.New("Release Please did not report a release PR")
+			return "", "", errors.New("release automation did not report a release PR")
 		}
 		item = list[0]
 	}
 	object, ok := item.(map[string]any)
 	if !ok {
-		return "", "", fmt.Errorf("unexpected Release Please PR payload: %T", item)
+		return "", "", fmt.Errorf("unexpected release PR payload: %T", item)
 	}
 	number := stringField(object, "number", "pullRequestNumber")
 	head := stringField(object, "headBranchName", "headRefName", "headBranch", "branchName")

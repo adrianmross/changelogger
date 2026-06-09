@@ -11,7 +11,7 @@ inputs:
   version:
     description: 'changelogger release tag to install.'
     required: false
-    default: 'v0.9.0'
+    default: 'v0.10.0'
   repository:
     description: 'Repository that publishes changelogger release assets.'
     required: false
@@ -47,10 +47,10 @@ outputs:
     description: 'release-tag reason output when command output includes it.'
     value: ${{ steps.run-command.outputs.reason }}
   number:
-    description: 'release-pr-info number output when command output includes it.'
+    description: 'release-info number output when command output includes it.'
     value: ${{ steps.run-command.outputs.number }}
   head_ref:
-    description: 'release-pr-info head_ref output when command output includes it.'
+    description: 'release-info head_ref output when command output includes it.'
     value: ${{ steps.run-command.outputs.head_ref }}
 
 runs:
