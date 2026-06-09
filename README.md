@@ -5,11 +5,11 @@
 Use the GitHub Action to install the released binary in workflows:
 
 ```yaml
-- uses: red-wiz/changelogger@v0.3.1
+- uses: red-wiz/changelogger@v0.4.0
   with:
     token: ${{ secrets.PRIV_GOMOD_INSTLR_PAT }}
 
-- run: changelogger check --component trqp_vdr_go --base origin/main --pr
+- run: changelogger check --base origin/main --pr
 ```
 
 Initialize a repository:
@@ -18,17 +18,20 @@ Initialize a repository:
 changelogger init --component trqp_vdr_go
 ```
 
+This writes `.changelogs/config.json`, so the component is project-local after
+initialization.
+
 Developers add explicit changelog fragments. Fragment files use three-word
 random slugs, for example `.changelogs/amber-matrix-river.md`.
 
 ```sh
-changelogger new --component trqp_vdr_go
+changelogger new
 ```
 
 CI validates the fragment and the PR title that Release Please will consume:
 
 ```sh
-changelogger check --component trqp_vdr_go --base origin/main --pr \
+changelogger check --base origin/main --pr \
   --pr-title "$PR_TITLE" \
   --pr-body "$PR_BODY"
 ```
@@ -39,7 +42,7 @@ GoReleaser:
 
 ```sh
 changelogger consume
-changelogger release-tag --component trqp_vdr_go \
+changelogger release-tag \
   --version-file .ochain.json \
   --manifest-file .release-please-manifest.json
 ```

@@ -18,6 +18,7 @@ import (
 )
 
 const defaultDir = ".changelogs"
+const configFileName = "config.json"
 
 var (
 	Version = "dev"
@@ -45,6 +46,10 @@ type Fragment struct {
 	Meta     map[string]string
 	Body     string
 	BodyLine string
+}
+
+type Config struct {
+	Component string `json:"component"`
 }
 
 type Options struct {
@@ -91,11 +96,11 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) err
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
   changelogger init --component <name>
-  changelogger new --component <name>
-  changelogger check --component <name> [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
+  changelogger new [--component <name>]
+  changelogger check [--component <name>] [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
   changelogger consume
   changelogger release-pr-info --prs-json <json>
-  changelogger release-tag --component <name> --version-file .ochain.json --manifest-file .release-please-manifest.json`)
+  changelogger release-tag [--component <name>] --version-file .ochain.json --manifest-file .release-please-manifest.json`)
 }
 
 func runInit(args []string, stdout io.Writer) error {
@@ -124,8 +129,9 @@ func runNew(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *component == "" {
-		return errors.New("--component is required")
+	resolvedComponent, err := ResolveComponent(*dir, *component)
+	if err != nil {
+		return err
 	}
 
 	reader := bufio.NewReader(stdin)
@@ -174,7 +180,7 @@ func runNew(args []string, stdin io.Reader, stdout io.Writer) error {
 	}
 	lines := []string{
 		"---",
-		"component: " + *component,
+		"component: " + resolvedComponent,
 		"bump: " + bump,
 		"type: " + changeType,
 	}
@@ -210,8 +216,9 @@ func runCheck(args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *component == "" {
-		return errors.New("--component is required")
+	resolvedComponent, err := ResolveComponent(*dir, *component)
+	if err != nil {
+		return err
 	}
 
 	fragments, err := LoadFragments(*dir)
@@ -220,10 +227,10 @@ func runCheck(args []string, stdout io.Writer) error {
 	}
 	var allErrors []string
 	for _, fragment := range fragments {
-		allErrors = append(allErrors, ValidateFragment(fragment, *component)...)
+		allErrors = append(allErrors, ValidateFragment(fragment, resolvedComponent)...)
 	}
 	changed := SignificantChangedFiles(*base)
-	if *pr && len(changed) > 0 && len(fragments) == 0 && !isReleasePRTitle(*prTitle, *component) {
+	if *pr && len(changed) > 0 && len(fragments) == 0 && !isReleasePRTitle(*prTitle, resolvedComponent) {
 		allErrors = append(allErrors, fmt.Sprintf("add a %s/<slug>.md release note fragment", *dir))
 	}
 	if *pr && len(fragments) > 0 {
@@ -286,13 +293,14 @@ func runReleaseTag(args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *component == "" {
-		return errors.New("--component is required")
+	resolvedComponent, err := ResolveComponent(*dir, *component)
+	if err != nil {
+		return err
 	}
 
 	result, err := ReleaseTagDecision(Options{
 		Dir:          *dir,
-		Component:    *component,
+		Component:    resolvedComponent,
 		VersionFile:  *versionFile,
 		ManifestFile: *manifestFile,
 		Remote:       *remote,
@@ -320,22 +328,65 @@ func Init(dir string, component string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	config := Config{Component: component}
+	configData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	configData = append(configData, '\n')
+	if err := os.WriteFile(filepath.Join(dir, configFileName), configData, 0o644); err != nil {
+		return err
+	}
 	readme := fmt.Sprintf(`# Changelog Fragments
 
 Use changelogger for user-visible chaincode changes:
 
 `+"```sh"+`
-changelogger new --component %[1]s
+changelogger new
 `+"```"+`
 
-The command writes a fragment under %[2]s with a three-word random slug.
+The command writes a fragment under %[1]s with a three-word random slug.
 Use the printed PR title so Release Please can derive the version bump after
 the PR is merged.
 
+Run `+"`changelogger init --component %[2]s`"+` to recreate this setup.
+
 Release PRs consume these fragments, update CHANGELOG.md, bump .ochain.json,
 and then create a tag for GoReleaser.
-`, component, dir)
+`, dir, component)
 	return os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644)
+}
+
+func LoadConfig(dir string) (Config, error) {
+	path := filepath.Join(dir, configFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
+	config.Component = strings.TrimSpace(config.Component)
+	if config.Component == "" {
+		return Config{}, fmt.Errorf("%s: component is required", path)
+	}
+	return config, nil
+}
+
+func ResolveComponent(dir string, component string) (string, error) {
+	component = strings.TrimSpace(component)
+	if component != "" {
+		return component, nil
+	}
+	config, err := LoadConfig(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("--component is required unless %s exists", filepath.Join(dir, configFileName))
+	}
+	if err != nil {
+		return "", err
+	}
+	return config.Component, nil
 }
 
 func NewFragmentPath(dir string) (string, error) {

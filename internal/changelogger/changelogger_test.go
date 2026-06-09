@@ -2,6 +2,7 @@ package changelogger
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -66,8 +67,23 @@ func TestInitWritesReadme(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(readme, []byte("changelogger new --component trqp_vdr_go")) {
-		t.Fatalf("README did not include component command:\n%s", readme)
+	if !bytes.Contains(readme, []byte("changelogger new")) {
+		t.Fatalf("README did not include new command:\n%s", readme)
+	}
+	if bytes.Contains(readme, []byte("changelogger new --component trqp_vdr_go")) {
+		t.Fatalf("README still documented repeated component command:\n%s", readme)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config Config
+	if err := json.Unmarshal(configData, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Component != "trqp_vdr_go" {
+		t.Fatalf("unexpected component: %s", config.Component)
 	}
 }
 
@@ -76,7 +92,11 @@ func TestNewUsesThreeWordSlug(t *testing.T) {
 	input := bytes.NewBufferString("patch\nfix\nFix bootstrap debug flow.\n\n")
 	var stdout bytes.Buffer
 
-	if err := Run([]string{"new", "--component", "trqp_vdr_go", "--dir", dir}, input, &stdout, &stdout); err != nil {
+	if err := Init(dir, "trqp_vdr_go"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run([]string{"new", "--dir", dir}, input, &stdout, &stdout); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,5 +110,20 @@ func TestNewUsesThreeWordSlug(t *testing.T) {
 	name := filepath.Base(files[0])
 	if !regexp.MustCompile(`^[a-z]+-[a-z]+-[a-z]+\.md$`).MatchString(name) {
 		t.Fatalf("expected three-word slug filename, got %s", name)
+	}
+}
+
+func TestResolveComponentAllowsFlagOverride(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".changelogs")
+	if err := Init(dir, "trqp_vdr_go"); err != nil {
+		t.Fatal(err)
+	}
+
+	component, err := ResolveComponent(dir, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if component != "other" {
+		t.Fatalf("expected flag component override, got %s", component)
 	}
 }
