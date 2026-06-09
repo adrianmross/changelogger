@@ -5,7 +5,7 @@
 Use the GitHub Action to install the released binary in workflows:
 
 ```yaml
-- uses: red-wiz/changelogger@v0.3.0
+- uses: red-wiz/changelogger@v0.3.1
   with:
     token: ${{ secrets.PRIV_GOMOD_INSTLR_PAT }}
 
