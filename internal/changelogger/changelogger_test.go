@@ -270,6 +270,68 @@ func TestResolveComponentUsesPackageConfig(t *testing.T) {
 	}
 }
 
+func TestResolveComponentDefaultsPackageComponentToPackageKey(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".changelogs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{
+  "packages": {
+    "api": {
+      "path": "services/api"
+    }
+  }
+}
+`)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	component, err := ResolveComponent(dir, "", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if component != "api" {
+		t.Fatalf("unexpected package component: %s", component)
+	}
+}
+
+func TestResolveComponentDefaultsPathLikePackageKeyToBasename(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".changelogs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{
+  "packages": {
+    "services/api": {}
+  }
+}
+`)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	component, err := ResolveComponent(dir, "", "services/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if component != "api" {
+		t.Fatalf("unexpected package component: %s", component)
+	}
+}
+
+func TestPackageConfigDefaultsComponentToPathBasename(t *testing.T) {
+	component, err := (PackageConfig{Path: "services/api"}).Resolve(".", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if component != "api" {
+		t.Fatalf("unexpected package component: %s", component)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

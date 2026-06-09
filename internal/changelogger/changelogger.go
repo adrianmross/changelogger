@@ -549,10 +549,21 @@ func (config PackageConfig) Resolve(baseDir string, packageName string) (string,
 	if config.Component.Configured() {
 		return config.Component.Resolve(packageBaseDir)
 	}
-	if packageName != "" {
-		return packageName, nil
+	if component := componentFromPackageName(packageName); component != "" {
+		return component, nil
+	}
+	if component := componentFromPackageName(config.Path); component != "" {
+		return component, nil
 	}
 	return "", errors.New("package component is required")
+}
+
+func componentFromPackageName(name string) string {
+	name = strings.Trim(strings.TrimSpace(name), "/")
+	if name == "" || name == "." {
+		return ""
+	}
+	return filepath.Base(name)
 }
 
 func configBaseDir(dir string) string {

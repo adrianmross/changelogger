@@ -5,7 +5,7 @@
 Use the GitHub Action to install the released binary and run changelogger in workflows:
 
 ```yaml
-- uses: adrianmross/changelogger@v0.8.0
+- uses: adrianmross/changelogger@v0.9.0
   with:
     command: check
     args: --base origin/main --pr
@@ -48,6 +48,23 @@ Monorepos can define package entries and select them with `--package`:
 {
   "packages": {
     "example-service": {
+      "path": "services/example-service"
+    }
+  }
+}
+```
+
+When `component` is omitted, changelogger uses the package key as the Release
+Please component. If the package key is path-like, such as `services/api`, the
+path basename is used. The `path` value is also used as a fallback.
+
+Use `component` only when the Release Please component should intentionally
+differ from the package key or path:
+
+```json
+{
+  "packages": {
+    "example-service": {
       "path": "services/example-service",
       "component": {
         "source": "package.json",
@@ -58,9 +75,7 @@ Monorepos can define package entries and select them with `--package`:
 }
 ```
 
-The source path is relative to the package path. Literal components remain
-supported for projects whose release component is intentionally different from
-their metadata.
+The source path is relative to the package path.
 
 Developers add explicit changelog fragments. Fragment files use three-word
 random slugs, for example `.changelogs/amber-matrix-river.md`.
