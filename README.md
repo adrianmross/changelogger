@@ -1,0 +1,28 @@
+# changelogger
+
+`changelogger` is a small, dependency-light Go CLI for chaincode release intent.
+
+Developers add explicit changelog fragments:
+
+```sh
+changelogger new --component trqp_vdr_go
+```
+
+CI validates the fragment and the PR title that Release Please will consume:
+
+```sh
+changelogger check --component trqp_vdr_go --base origin/main --pr \
+  --pr-title "$PR_TITLE" \
+  --pr-body "$PR_BODY"
+```
+
+Release workflows use the same binary to remove consumed fragments from the
+Release Please PR and to decide whether a merged release PR should be tagged for
+GoReleaser:
+
+```sh
+changelogger consume
+changelogger release-tag --component trqp_vdr_go \
+  --version-file .ochain.json \
+  --manifest-file .release-please-manifest.json
+```
