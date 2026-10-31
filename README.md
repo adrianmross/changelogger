@@ -2,6 +2,8 @@
 
 `changelogger` is a small, dependency-light Go CLI for explicit release intent.
 
+It was inspired by [changesets](https://github.com/changesets/changesets).
+
 Use the GitHub Action to install the released binary and run changelogger in workflows:
 
 ```yaml
