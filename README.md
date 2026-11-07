@@ -7,7 +7,7 @@ It was inspired by [changesets](https://github.com/changesets/changesets).
 Use the GitHub Action to install the released binary and run changelogger in workflows:
 
 ```yaml
-- uses: adrianmross/changelogger@v0.10.0
+- uses: adrianmross/changelogger@v0.11.0
   with:
     command: check
     args: --base origin/main --pr
@@ -93,7 +93,48 @@ CI validates the fragment and the PR title that release automation will consume:
 ```sh
 changelogger check --base origin/main --pr \
   --pr-title "$PR_TITLE" \
-  --pr-body "$PR_BODY"
+  --pr-body "$PR_BODY" \
+  --pr-labels "$PR_LABELS"
+```
+
+A PR that changes shipped files needs a fragment unless it ships no release:
+
+- its title type is one release-please never releases: `build`, `chore`, `ci`,
+  `docs`, `refactor`, `style` or `test` (a breaking `refactor!:` still needs one);
+- it carries the `no-changelog` label (pass labels with `--pr-labels`, or
+  `CHANGELOGGER_PR_LABELS`);
+- or the run passes `--skip-fragment`.
+
+Changes only under `.changelogs/`, `.github/` or `docs/`, to Markdown files, or
+to the release-please config and manifest never need one. When a fragment is
+present, the title must still match it.
+
+Tune these in the `check` block of `.changelogs/config.json`. A list you leave
+out keeps its default; an empty list turns that rule off. In `ignore`, `dir/`
+is a path prefix, a pattern with a slash matches the whole path, and any other
+pattern matches the file name.
+
+```json
+{
+  "component": "example-service",
+  "check": {
+    "exemptTypes": ["build", "chore", "ci", "docs", "refactor", "style", "test"],
+    "exemptLabels": ["no-changelog"],
+    "ignore": [".changelogs/", ".github/", "docs/", "*.md", "release-please-config.json", ".release-please-manifest.json"]
+  }
+}
+```
+
+In GitHub Actions, pass the labels and rerun the check when the title or labels
+change:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+# ...
+      - env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
 ```
 
 Release workflows use the same binary to remove consumed fragments and decide

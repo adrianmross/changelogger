@@ -416,3 +416,62 @@ func runGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v failed: %v\n%s", args, err, output)
 	}
 }
+
+func TestFragmentExemption(t *testing.T) {
+	check, err := LoadCheckConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		title, labels string
+		skip, exempt  bool
+	}{
+		{title: "refactor(brand): Keep the name in one place", exempt: true},
+		{title: "chore: bump deps", exempt: true},
+		{title: "refactor!: Drop the v1 API", exempt: false},
+		{title: "fix(ui): Point the docs link at /docs", exempt: false},
+		{title: "perf: Cache the index", exempt: false},
+		{title: "fix: something", labels: "bug, no-changelog", exempt: true},
+		{title: "fix: something", skip: true, exempt: true},
+		{title: "Update things", exempt: false},
+	} {
+		if got := FragmentExemption(check, tc.title, tc.labels, tc.skip) != ""; got != tc.exempt {
+			t.Errorf("FragmentExemption(%q, %q, %v) exempt = %v, want %v", tc.title, tc.labels, tc.skip, got, tc.exempt)
+		}
+	}
+}
+
+func TestCheckConfigOverridesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	config := `{"component": "example", "check": {"exemptTypes": ["chore"], "exemptLabels": [], "ignore": ["site/", "*.txt"]}}`
+	if err := os.WriteFile(filepath.Join(dir, configFileName), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check, err := LoadCheckConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if FragmentExemption(check, "refactor: x", "", false) != "" {
+		t.Error("refactor should need a fragment once exemptTypes is set to chore only")
+	}
+	if FragmentExemption(check, "fix: x", "no-changelog", false) != "" {
+		t.Error("an empty exemptLabels should turn the label off")
+	}
+	for file, ignored := range map[string]bool{"site/index.html": true, "notes/a.txt": true, "README.md": false, "main.go": false} {
+		if got := ignoredChange(file, check.Ignore); got != ignored {
+			t.Errorf("ignoredChange(%q) = %v, want %v", file, got, ignored)
+		}
+	}
+}
+
+func TestDefaultIgnoreMatchesPreviousRules(t *testing.T) {
+	for file, ignored := range map[string]bool{
+		".changelogs/a.md": true, ".github/workflows/ci.yml": true, "docs/guide/x.png": true,
+		"README.md": true, "web/NOTES.md": true, "release-please-config.json": true,
+		"main.go": false, "web/app.tsx": false,
+	} {
+		if got := ignoredChange(file, defaultIgnore); got != ignored {
+			t.Errorf("ignoredChange(%q) = %v, want %v", file, got, ignored)
+		}
+	}
+}

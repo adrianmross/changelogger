@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -30,7 +31,14 @@ var (
 	validBumps = map[string]bool{"patch": true, "minor": true, "major": true}
 	validTypes = map[string]bool{"fix": true, "feat": true, "deps": true}
 	semverRE   = regexp.MustCompile(`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`)
-	slugWords  = []string{
+	// type, optional (scope), optional ! for a breaking change, then a colon.
+	conventionalTitleRE = regexp.MustCompile(`^([a-z]+)(\([^)]*\))?(!)?:`)
+	// Conventional types release-please never releases. perf and revert are
+	// left out: release-please lists them in the changelog.
+	defaultExemptTypes  = []string{"build", "chore", "ci", "docs", "refactor", "style", "test"}
+	defaultExemptLabels = []string{"no-changelog"}
+	defaultIgnore       = []string{".changelogs/", ".github/", "docs/", "*.md", "release-please-config.json", ".release-please-manifest.json"}
+	slugWords           = []string{
 		"amber", "anchor", "arcade", "atlas", "aurora", "baker", "basin", "binary", "brisk", "brook",
 		"cable", "carbon", "cedar", "cinder", "civic", "clover", "cobalt", "copper", "coral", "crystal",
 		"delta", "ember", "fabric", "fable", "frost", "galaxy", "garden", "harbor", "hazel", "ivory",
@@ -51,6 +59,19 @@ type Fragment struct {
 type Config struct {
 	Component ComponentConfig          `json:"component,omitempty"`
 	Packages  map[string]PackageConfig `json:"packages,omitempty"`
+	Check     *CheckConfig             `json:"check,omitempty"`
+}
+
+// CheckConfig tunes when `check` requires a fragment. A list left out keeps
+// its default; an empty list turns that rule off.
+type CheckConfig struct {
+	// PR title types that need no fragment, e.g. "refactor" for "refactor(ui): ...".
+	ExemptTypes []string `json:"exemptTypes,omitempty"`
+	// PR labels that waive the fragment.
+	ExemptLabels []string `json:"exemptLabels,omitempty"`
+	// Changed paths that never need a fragment: "dir/" is a prefix, a pattern
+	// with a slash matches the whole path, any other matches the file name.
+	Ignore []string `json:"ignore,omitempty"`
 }
 
 type PackageConfig struct {
@@ -110,7 +131,7 @@ func usage(w io.Writer) {
   changelogger [--component <name>] [--package <name>]
   changelogger init [--component <name>] [--component-source <file>] [--component-jsonpath <path>]
   changelogger new [--component <name>] [--package <name>]
-  changelogger check [--component <name>] [--package <name>] [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>]
+  changelogger check [--component <name>] [--package <name>] [--base <ref>] [--pr] [--pr-title <title>] [--pr-body <body>] [--pr-labels <a,b>] [--skip-fragment]
   changelogger consume
   changelogger release-info --prs-json <json>
   changelogger release-tag [--component <name>] [--package <name>] --version-file package.json --manifest-file .release-please-manifest.json`)
@@ -234,10 +255,16 @@ func runCheck(args []string, stdout io.Writer) error {
 	pr := fs.Bool("pr", false, "pull request mode")
 	prTitle := fs.String("pr-title", os.Getenv("CHANGELOGGER_PR_TITLE"), "pull request title")
 	prBody := fs.String("pr-body", os.Getenv("CHANGELOGGER_PR_BODY"), "pull request body")
+	prLabels := fs.String("pr-labels", os.Getenv("CHANGELOGGER_PR_LABELS"), "comma-separated pull request labels")
+	skipFragment := fs.Bool("skip-fragment", false, "do not require a fragment for this run")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	resolvedComponent, err := ResolveComponent(*dir, *component, *packageName)
+	if err != nil {
+		return err
+	}
+	check, err := LoadCheckConfig(*dir)
 	if err != nil {
 		return err
 	}
@@ -250,9 +277,16 @@ func runCheck(args []string, stdout io.Writer) error {
 	for _, fragment := range fragments {
 		allErrors = append(allErrors, ValidateFragment(fragment, resolvedComponent)...)
 	}
-	changed := SignificantChangedFiles(*base)
+	changed := SignificantChangedFiles(*base, check.Ignore)
 	if *pr && len(changed) > 0 && len(fragments) == 0 && !isReleasePRTitle(*prTitle, resolvedComponent) {
-		allErrors = append(allErrors, fmt.Sprintf("add a %s/<slug>.md release note fragment", *dir))
+		if reason := FragmentExemption(check, *prTitle, *prLabels, *skipFragment); reason != "" {
+			fmt.Fprintf(stdout, "No changelog fragment required: %s.\n", reason)
+		} else {
+			allErrors = append(allErrors, fmt.Sprintf("add a %s/<slug>.md release note fragment, or, for a change that ships no release, title the PR with one of: %s", *dir, strings.Join(check.ExemptTypes, ", ")))
+			if len(check.ExemptLabels) > 0 {
+				allErrors[len(allErrors)-1] += fmt.Sprintf("; or add the label %s", strings.Join(check.ExemptLabels, " or "))
+			}
+		}
 	}
 	if *pr && len(fragments) > 0 {
 		allErrors = append(allErrors, ValidateReleaseSignal(fragments, *prTitle, *prBody)...)
@@ -784,7 +818,48 @@ func isReleasePRTitle(title string, component string) bool {
 	return pattern.MatchString(strings.TrimSpace(title))
 }
 
-func SignificantChangedFiles(base string) []string {
+// LoadCheckConfig reads the check block of the config file, filling in the
+// defaults. A missing config file means all defaults.
+func LoadCheckConfig(dir string) (CheckConfig, error) {
+	var check CheckConfig
+	config, err := LoadConfig(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return check, err
+	}
+	if config.Check != nil {
+		check = *config.Check
+	}
+	if check.ExemptTypes == nil {
+		check.ExemptTypes = defaultExemptTypes
+	}
+	if check.ExemptLabels == nil {
+		check.ExemptLabels = defaultExemptLabels
+	}
+	if check.Ignore == nil {
+		check.Ignore = defaultIgnore
+	}
+	return check, nil
+}
+
+// FragmentExemption says why a PR needs no fragment, or "" when it needs one.
+// A breaking change ("refactor!: ...") is never exempt by its title.
+func FragmentExemption(check CheckConfig, title string, labels string, skip bool) string {
+	if skip {
+		return "--skip-fragment"
+	}
+	for _, label := range strings.Split(labels, ",") {
+		if label = strings.TrimSpace(label); label != "" && slices.Contains(check.ExemptLabels, label) {
+			return "label " + label
+		}
+	}
+	match := conventionalTitleRE.FindStringSubmatch(strings.TrimSpace(title))
+	if match != nil && match[3] == "" && slices.Contains(check.ExemptTypes, match[1]) {
+		return match[1] + " PR title"
+	}
+	return ""
+}
+
+func SignificantChangedFiles(base string, ignore []string) []string {
 	if base == "" {
 		return nil
 	}
@@ -798,7 +873,7 @@ func SignificantChangedFiles(base string) []string {
 	}
 	var changed []string
 	for _, file := range strings.Split(output, "\n") {
-		if file == "" || ignoredChange(file) {
+		if file == "" || ignoredChange(file, ignore) {
 			continue
 		}
 		changed = append(changed, file)
@@ -806,15 +881,22 @@ func SignificantChangedFiles(base string) []string {
 	return changed
 }
 
-func ignoredChange(file string) bool {
-	if strings.HasPrefix(file, ".changelogs/") || strings.HasPrefix(file, ".github/") || strings.HasPrefix(file, "docs/") {
-		return true
+func ignoredChange(file string, ignore []string) bool {
+	for _, pattern := range ignore {
+		var ok bool
+		switch {
+		case strings.HasSuffix(pattern, "/"):
+			ok = strings.HasPrefix(file, pattern)
+		case strings.Contains(pattern, "/"):
+			ok, _ = filepath.Match(pattern, file)
+		default:
+			ok, _ = filepath.Match(pattern, filepath.Base(file))
+		}
+		if ok {
+			return true
+		}
 	}
-	switch file {
-	case "README.md", "CHANGELOG.md", "AGENTS.md", "release-please-config.json", ".release-please-manifest.json":
-		return true
-	}
-	return strings.HasSuffix(file, ".md")
+	return false
 }
 
 func ReleasePRInfo(raw string) (string, string, error) {
